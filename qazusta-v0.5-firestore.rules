@@ -59,10 +59,12 @@ service cloud.firestore {
       match /offers/{masterId} {
         allow read: if signed() && (
           get(/databases/$(database)/documents/orders/$(orderId)).data.ownerId == request.auth.uid
+&& get(/databases/$(database)/documents/orders/$(orderId)).data.status == 'open'
           || masterId == request.auth.uid);
         allow create: if userRole('master') && masterId == request.auth.uid
           && exists(/databases/$(database)/documents/masters/$(request.auth.uid))
           && get(/databases/$(database)/documents/orders/$(orderId)).data.ownerId != request.auth.uid
+          && get(/databases/$(database)/documents/orders/$(orderId)).data.status == 'open'
           && request.resource.data.keys().hasOnly(['masterId','price','message','createdAt'])
           && request.resource.data.keys().hasAll(['masterId','price','message','createdAt'])
           && request.resource.data.masterId == request.auth.uid
