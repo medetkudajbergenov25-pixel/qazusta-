@@ -1,0 +1,76 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signed() { return request.auth != null; }
+    function userRole(role) {
+      return signed() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == role;
+    }
+    function validCategory(n) { return n is int && n >= 0 && n < 12; }
+    function validCity(c) { return c is string && c.size() > 0 && c.size() <= 60; }
+    match /users/{uid} {
+      allow read: if signed() && request.auth.uid == uid;
+      allow create, update: if signed() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['role', 'updatedAt'])
+        && request.resource.data.role in ['client', 'master']
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if false;
+    }
+    match /masters/{uid} {
+      allow read: if signed();
+      allow create, update: if signed() && request.auth.uid == uid && userRole('master')
+        && request.resource.data.keys().hasOnly(['ownerId','name','city','service','experience','startingPrice','about','updatedAt'])
+        && request.resource.data.keys().hasAll(['ownerId','name','city','service','experience','startingPrice','about','updatedAt'])
+        && request.resource.data.ownerId == uid
+        && request.resource.data.name is string && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 80
+        && validCity(request.resource.data.city) && validCategory(request.resource.data.service)
+        && request.resource.data.experience is number && request.resource.data.experience >= 0 && request.resource.data.experience <= 70
+        && request.resource.data.startingPrice is number && request.resource.data.startingPrice >= 0 && request.resource.data.startingPrice <= 100000000
+        && request.resource.data.about is string && request.resource.data.about.size() <= 600
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if signed() && request.auth.uid == uid;
+    }
+    match /orders/{orderId} {
+      allow read: if signed();
+      allow create: if userRole('client')
+        && request.resource.data.keys().hasOnly(['ownerId','name','city','service','budget','description','status','createdAt'])
+        && request.resource.data.keys().hasAll(['ownerId','name','city','service','budget','description','status','createdAt'])
+        && request.resource.data.ownerId == request.auth.uid
+        && request.resource.data.name is string && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 80
+        && validCity(request.resource.data.city) && validCategory(request.resource.data.service)
+        && request.resource.data.budget is number && request.resource.data.budget >= 0 && request.resource.data.budget <= 100000000
+        && request.resource.data.description is string && request.resource.data.description.size() > 0 && request.resource.data.description.size() <= 1000
+        && request.resource.data.status == 'open' && request.resource.data.createdAt == request.time;
+      // Only the order owner can choose an existing offer, then finish the order.
+      allow update: if userRole('client')
+        && resource.data.ownerId == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','selectedMasterId','selectedAt'])
+        && resource.data.status == 'open'
+        && request.resource.data.status == 'in_progress'
+        && request.resource.data.selectedMasterId is string
+        && exists(/databases/$(database)/documents/orders/$(orderId)/offers/$(request.resource.data.selectedMasterId))
+        && request.resource.data.selectedAt == request.time
+        || userRole('client')
+        && resource.data.ownerId == request.auth.uid
+        && resource.data.status == 'in_progress'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','completedAt'])
+        && request.resource.data.status == 'completed'
+        && request.resource.data.completedAt == request.time;
+      allow delete: if signed() && resource.data.ownerId == request.auth.uid;
+      match /offers/{masterId} {
+        allow read: if signed() && (
+          get(/databases/$(database)/documents/orders/$(orderId)).data.ownerId == request.auth.uid
+          || masterId == request.auth.uid);
+        allow create: if userRole('master') && masterId == request.auth.uid
+          && exists(/databases/$(database)/documents/masters/$(request.auth.uid))
+          && get(/databases/$(database)/documents/orders/$(orderId)).data.ownerId != request.auth.uid
+          && request.resource.data.keys().hasOnly(['masterId','price','message','createdAt'])
+          && request.resource.data.keys().hasAll(['masterId','price','message','createdAt'])
+          && request.resource.data.masterId == request.auth.uid
+          && request.resource.data.price is number && request.resource.data.price >= 0 && request.resource.data.price <= 100000000
+          && request.resource.data.message is string && request.resource.data.message.size() > 0 && request.resource.data.message.size() <= 500
+          && request.resource.data.createdAt == request.time;
+        allow update, delete: if false;
+      }
+    }
+  }
+}
